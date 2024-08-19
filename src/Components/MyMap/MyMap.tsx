@@ -3,7 +3,7 @@ import {
   GoogleMap,
   Marker,
   useJsApiLoader,
-  MarkerClusterer
+  MarkerClusterer,
 } from "@react-google-maps/api";
 
 interface MarkerType {
@@ -14,22 +14,25 @@ interface MarkerType {
 
 const MyMap = () => {
   const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: "AIzaSyDy3037iy2cV8jwRmj-JooSE26A7sZTsP8",
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
   });
 
   const [markers, setMarkers] = useState<MarkerType[]>([]);
   const position = { lat: 49.8397, lng: 24.0297 };
 
-  const handleMapClick = useCallback((e: google.maps.MapMouseEvent) => {
-    if (e.latLng) {
-      const newMarker: MarkerType = {
-        lat: e.latLng.lat(),
-        lng: e.latLng.lng(),
-        label: (markers.length + 1).toString(),
-      };
-      setMarkers((prevMarkers) => [...prevMarkers, newMarker]);
-    }
-  }, [markers]);
+  const handleMapClick = useCallback(
+    (e: google.maps.MapMouseEvent) => {
+      if (e.latLng) {
+        const newMarker: MarkerType = {
+          lat: e.latLng.lat(),
+          lng: e.latLng.lng(),
+          label: (markers.length + 1).toString(),
+        };
+        setMarkers((prevMarkers) => [...prevMarkers, newMarker]);
+      }
+    },
+    [markers]
+  );
 
   const deleteMarker = useCallback((index: number) => {
     setMarkers((prevMarkers) => prevMarkers.filter((_, i) => i !== index));
@@ -39,17 +42,20 @@ const MyMap = () => {
     setMarkers([]);
   }, []);
 
-  const handleMarkerDragEnd = useCallback((index: number, e: google.maps.MapMouseEvent) => {
-    if (e.latLng) {
-      setMarkers((prevMarkers) =>
-        prevMarkers.map((marker, i) =>
-          i === index
-            ? { ...marker, lat: e.latLng!.lat(), lng: e.latLng!.lng() }
-            : marker
-        )
-      );
-    }
-  }, []);
+  const handleMarkerDragEnd = useCallback(
+    (index: number, e: google.maps.MapMouseEvent) => {
+      if (e.latLng) {
+        setMarkers((prevMarkers) =>
+          prevMarkers.map((marker, i) =>
+            i === index
+              ? { ...marker, lat: e.latLng!.lat(), lng: e.latLng!.lng() }
+              : marker
+          )
+        );
+      }
+    },
+    []
+  );
 
   if (!isLoaded) {
     return <div>Loading...</div>;
