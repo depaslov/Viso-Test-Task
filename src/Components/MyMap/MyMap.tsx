@@ -1,21 +1,30 @@
-import { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   GoogleMap,
   Marker,
   useJsApiLoader,
   MarkerClusterer,
 } from "@react-google-maps/api";
-import { collection, addDoc, Timestamp, doc, updateDoc, deleteField, deleteDoc } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  Timestamp,
+  doc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+} from "firebase/firestore";
 import { db } from "../../firebase";
 
 interface MarkerType {
+  id: string;
   lat: number;
   lng: number;
   label: string;
   timestamp: number;
 }
 
-const MyMap = () => {
+const MyMap: React.FC = () => {
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
   });
@@ -23,26 +32,41 @@ const MyMap = () => {
   const [markers, setMarkers] = useState<MarkerType[]>([]);
   const position = { lat: 49.8397, lng: 24.0297 };
 
+  useEffect(() => {
+    const fetchMarkers = async () => {
+      const questsRef = collection(db, "quests");
+      const snapshot = await getDocs(questsRef);
+      const fetchedMarkers = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as MarkerType[];
+      setMarkers(fetchedMarkers);
+    };
+
+    fetchMarkers();
+  }, []);
+
   const handleMapClick = useCallback(
     async (e: google.maps.MapMouseEvent) => {
       if (e.latLng) {
+        const timestamp = Date.now();
         const newMarker: MarkerType = {
+          id: "",
           lat: e.latLng.lat(),
           lng: e.latLng.lng(),
           label: (markers.length + 1).toString(),
-          timestamp: Date.now(),
+          timestamp,
         };
-        setMarkers((prevMarkers) => [...prevMarkers, newMarker]);
 
         try {
           const questsRef = collection(db, "quests");
-          await addDoc(questsRef, {
-            [`Quest ${newMarker.label}`]: {
-              Location: `${newMarker.lat}, ${newMarker.lng}`,
-              Timestamp: Timestamp.fromMillis(newMarker.timestamp),
-              Next: newMarker.label === markers.length.toString() ? null : `Quest ${parseInt(newMarker.label) + 1}`,
-            },
+          const docRef = await addDoc(questsRef, {
+            Location: `${newMarker.lat}, ${newMarker.lng}`,
+            Timestamp: Timestamp.fromMillis(timestamp),
+            Next: markers.length === 0 ? null : `Quest ${markers.length + 2}`,
           });
+          newMarker.id = docRef.id;
+          setMarkers((prevMarkers) => [...prevMarkers, newMarker]);
         } catch (error) {
           console.error("Error adding document: ", error);
         }
@@ -51,54 +75,60 @@ const MyMap = () => {
     [markers]
   );
 
-  const deleteMarker = useCallback(async (index: number) => {
-    setMarkers((prevMarkers) => {
-      const updatedMarkers = prevMarkers.filter((_, i) => i !== index);
-      
-      const questsRef = doc(db, "quests");
-      updateDoc(questsRef, {
-        [`Quest ${index + 1}`]: deleteField(),
-      }).catch((error) => console.error("Error deleting quest: ", error));
+  const deleteMarker = useCallback(
+    async (id: string) => {
+      try {
+        const questRef = doc(db, "quests", id);
+        await deleteDoc(questRef);
+        setMarkers((prevMarkers) =>
+          prevMarkers.filter((marker) => marker.id !== id)
+        );
 
-      if (index > 0) {
-        updateDoc(questsRef, {
-          [`Quest ${index}`]: {
-            Next: index === prevMarkers.length - 1 ? null : `Quest ${index + 2}`,
-          },
-        }).catch((error) => console.error("Error updating previous quest: ", error));
+        const updatedMarkers = markers.filter((marker) => marker.id !== id);
+        const index = markers.findIndex((marker) => marker.id === id);
+        if (index > 0) {
+          const prevMarker = updatedMarkers[index - 1];
+          const prevQuestRef = doc(db, "quests", prevMarker.id);
+          await updateDoc(prevQuestRef, {
+            Next: index === updatedMarkers.length ? null : `Quest ${index + 2}`,
+          });
+        }
+      } catch (error) {
+        console.error("Error deleting quest: ", error);
       }
-
-      return updatedMarkers;
-    });
-  }, []);
+    },
+    [markers]
+  );
 
   const deleteAllMarkers = useCallback(async () => {
-    setMarkers([]);
-    
     try {
-      await deleteDoc(doc(db, "quests"));
+      const questsRef = collection(db, "quests");
+      const snapshot = await getDocs(questsRef);
+      snapshot.forEach((doc) => deleteDoc(doc.ref));
+      setMarkers([]);
     } catch (error) {
       console.error("Error deleting all quests: ", error);
     }
   }, []);
 
   const handleMarkerDragEnd = useCallback(
-    async (index: number, e: google.maps.MapMouseEvent) => {
+    async (id: string, e: google.maps.MapMouseEvent) => {
       if (e.latLng) {
-        setMarkers((prevMarkers) => {
-          const updatedMarkers = prevMarkers.map((marker, i) =>
-            i === index
-              ? { ...marker, lat: e.latLng!.lat(), lng: e.latLng!.lng() }
-              : marker
+        try {
+          const questRef = doc(db, "quests", id);
+          await updateDoc(questRef, {
+            Location: `${e.latLng.lat()}, ${e.latLng.lng()}`,
+          });
+          setMarkers((prevMarkers) =>
+            prevMarkers.map((marker) =>
+              marker.id === id
+                ? { ...marker, lat: e.latLng!.lat(), lng: e.latLng!.lng() }
+                : marker
+            )
           );
-
-          const questsRef = doc(db, "quests");
-          updateDoc(questsRef, {
-            [`Quest ${index + 1}.Location`]: `${e.latLng!.lat()}, ${e.latLng!.lng()}`,
-          }).catch((error) => console.error("Error updating quest location: ", error));
-
-          return updatedMarkers;
-        });
+        } catch (error) {
+          console.error("Error updating quest location: ", error);
+        }
       }
     },
     []
@@ -122,14 +152,14 @@ const MyMap = () => {
           <MarkerClusterer>
             {(clusterer) => (
               <>
-                {markers.map((marker, index) => (
+                {markers.map((marker) => (
                   <Marker
-                    key={index}
+                    key={marker.id}
                     position={{ lat: marker.lat, lng: marker.lng }}
                     label={marker.label}
-                    onClick={() => deleteMarker(index)}
+                    onClick={() => deleteMarker(marker.id)}
                     draggable={true}
-                    onDragEnd={(e) => handleMarkerDragEnd(index, e)}
+                    onDragEnd={(e) => handleMarkerDragEnd(marker.id, e)}
                     clusterer={clusterer}
                   />
                 ))}
